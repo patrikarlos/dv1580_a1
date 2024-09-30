@@ -54,7 +54,7 @@ void test_random_blocks()
 {
     printf_yellow("  Testing random blocks and mem_free ---> ");
     srand(time(NULL));
-    int nBlocks = rand() % 40;
+    int nBlocks = 1000 + rand() % 10000;
     int blockSize = rand() % 1024;
 
     int memSize = nBlocks * 1024;
@@ -304,6 +304,8 @@ void test_memory_fragmentation()
     printf_green("[PASS].\n");
 }
 
+
+  
 void test_edge_case_allocations()
 {
     printf_yellow("  Testing edge case allocations ---> ");
@@ -356,6 +358,11 @@ int main(int argc, char *argv[])
         printf(" 14. test_block_merging - Test merging of adjacent free blocks\n");
         printf(" 15. test_non_contiguous_allocation_failure - Ensure failure when no contiguous block fits\n");
         printf(" 16. test_contiguous_allocation_success - Ensure success when a contiguous block fits\n");
+
+	
+	printf("\nVarious tests: \n");
+	printf(" 17. test_zero_alloc_and_free - Ensure that we can allocate 0 bytes, and it does not fail.\n");
+	printf(" 18. test_random_blocks - Test that we can allocate a random size, and random amounts of blocks [1000,10000]. \n\n");
         printf(" 0. Run all tests\n");
         return 1;
     }
