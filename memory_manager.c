@@ -50,7 +50,7 @@ void *mem_alloc(size_t size) {
 }
 
 void mem_free(void *block) {
-    if(block == NULL) {
+    if(!is_valid_block(block)) {
         return;
     }
 
@@ -74,9 +74,47 @@ void mem_free(void *block) {
 }
 
 void *mem_resize(void *block, size_t size) {
-    
+    if(!is_valid_block(block))
+    {
+        return; //will make this into proper error in a bit..
+    }
+
+    struct memblock *current = (struct memblock*)(char*)block - sizeof(struct memblock);
+
+    if(current->size == size) {
+        return block;
+    }
+
+    if(current->size > size) {
+        if(current->next != NULL && current->next->is_free && current->next->size + current->size + sizeof(struct memblock) >= size)
+        current->size += current->next->size + sizeof(struct memblock);
+    }
+    if(current->size < size) {
+
+    }
 }
 
 void mem_deinit() {
     free(memory_);
+}
+
+
+//helper function(s)
+
+bool is_valid_block(void *block) {
+
+    if(block == NULL){
+        return false;
+    }
+    //if ((char*)block < (char*)memory_ || (char*)block >= (char*)memory_ + memsize_) {
+    //    return false;
+    //}
+    struct memblock *current = metadata_;
+    while(current != NULL) {
+        if((char*)block == (char*)current + sizeof(struct memblock)) {
+            return true;
+        }
+        current = current->next;
+    }
+    return false;
 }
