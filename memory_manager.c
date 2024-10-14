@@ -1,80 +1,102 @@
 #include "memory_manager.h"
 
-struct memblock {
+typedef struct memblock_ {
+    void* address;
     size_t size;
     bool is_free;
-    struct memblock *next;
-};
+    struct memblock_* next;
+} memblock_;
 
 static void *memory_ = NULL;
-static struct memblock* metadata_ = NULL;
-static size_t memsize_;
-static size_t totmemused_;
+static memblock_* metadata_ = NULL;
 
-//helper function(s)
+//helper functions
 
-bool is_valid_block(void *block) {
+memblock_* is_valid_block(void *block) {
+    //checks if the block mathces any existing memory block.
+    //if it does, returns that metadata
     if(block == NULL){
-        return false;
+        return NULL;
     }
-    struct memblock *current = metadata_;
+    memblock_ *current = metadata_;
+
     while(current != NULL) {
-        if((char*)block == (char*)current + sizeof(struct memblock)) {
-            return true;
+        if(current->address == block) {
+            return current;
         }
         current = current->next;
     }
-    return false;
+    //if it doesnt, returns NULL
+    return NULL;
+}
+
+memblock_* setblock(size_t size, bool is_free, void *address, memblock_ *next) {
+    //"constructor" for memblock_
+    memblock_* block = malloc(sizeof(memblock_));
+    if (block == NULL) {
+        return NULL;
+    }
+    block->is_free = is_free;
+    block->size = size;
+    block->address = address;
+    block->next = next;
+    return block;
+}
+
+void free_metadata(memblock_* datablock) {
+    //recursively free all memblock_ nodes
+    if(datablock->next != NULL) {
+        free_metadata(datablock->next);
+    }
+    free(datablock);
 }
 
 //real functions
 
 void mem_init(size_t size) {
-    if (size <= sizeof(struct memblock)) {
-        fprintf(stderr, "Error: Provided size is too small to fit the metadata\n");
-        return;
-    }
-
-    memory_ = malloc(size + (100*sizeof(struct memblock)));
+    memory_ = malloc(size);
     if (memory_ == NULL) {
         fprintf(stderr, "Failed to allocate memory.\n");
         return;
     }
     
-    metadata_ = (struct memblock*)memory_;
-
-    metadata_->size = size;  
-    metadata_->is_free = true;  
-    metadata_->next = NULL;     
-    memsize_ = size;
-    totmemused_ = 0;
+    metadata_ = setblock(
+        size,
+        true,
+        memory_, 
+        NULL);
 }
 
 void *mem_alloc(size_t size) {
-    struct memblock *current = metadata_;
-    if(totmemused_ + size > memsize_){
-        return NULL;
-    }
-
+    memblock_ *current = metadata_;
 
     while (current != NULL) {
-        if (current->is_free && current->size >= size + sizeof(struct memblock)) {
-            
-            if (current->size >= size + 2 * sizeof(struct memblock)) {
-                struct memblock *new_block = (struct memblock*)((char*)current + sizeof(struct memblock) + size);
 
-                new_block->size = current->size - size - sizeof(struct memblock);
-                new_block->is_free = true;
-                new_block->next = current->next;
-                
+        if (current->is_free && current->size >= size) {
+            //if we have extra space, lets turn that into a new block
+
+            if (current->size > size) {
+                size_t remaining_size = current->size - size;
+                void* new_address = (char*)current->address +size;
+                memblock_ *new_block = setblock(
+                remaining_size,
+                true, 
+                new_address,
+                current->next
+                );
+                if (new_block == NULL) {
+                    return NULL;
+                }
+                current->size = size;
+                current->is_free = false;
                 current->next = new_block;
             }
+            //this will always happen if we have space
             
-            current->size = size;
-            current->is_free = false;
-            totmemused_ += size;
-
-            return (void*)((char*)current + sizeof(struct memblock));
+            else{
+                current->is_free = false;
+                }
+            return current->address;
         }
         current = current->next;
     }
@@ -82,84 +104,82 @@ void *mem_alloc(size_t size) {
 }
 
 void mem_free(void *block) {
-    if(!is_valid_block(block)) {
+//sets given memory block as free, and merges it will adjacent free memory blocks, if there are any    
+
+    memblock_ *current = is_valid_block(block);
+    if(current == NULL) {
         fprintf(stderr, "Error: Invalid memory block.\n");
         return;
     }
-    struct memblock *current = (struct memblock*)((char*)block - sizeof(struct memblock));
-    printf("in free: Current block size: %zu, is_free: %d\n", current->size, current->is_free);
-    totmemused_ -= current->size;
     current->is_free = true;
 
-    struct memblock *previous = metadata_;
-    while(previous != NULL && previous->next != current){
+    memblock_ *previous = metadata_;
+    while(previous != NULL && previous->next != current) {
         previous = previous->next;
     }
 
     if(current->next != NULL && current->next->is_free) {
-        current->size += current->next->size + sizeof(struct memblock);
+        memblock_* toremove = current->next;
+        current->size += current->next->size;
         current->next = current->next->next;
+        free(toremove);
     }
-    if(previous != NULL && previous->is_free){
-        previous->size += current->size + sizeof(struct memblock);
+
+    if(previous != NULL && previous->is_free) {
+        previous->size += current->size;
         previous->next = current->next;
+        free(current);
     }
 }
 
 void *mem_resize(void *block, size_t size) {
-    if(!is_valid_block(block))
+    memblock_* current = is_valid_block(block);
+    if(current == NULL)
     {
         fprintf(stderr, "Error: Invalid memory block.\n");
-        return NULL;
+        return current;
     }
-
-    struct memblock *current = (struct memblock*)(char*)block - sizeof(struct memblock);
-    size_t old_size = current->size;
-
-    if(old_size == size) {
+    //first case: resize to same size
+    if(current->size == size) {
         return block;
     }
+    //second case: resize to larger size
+    if(current->size < size) {
+        
+        if(current->next != NULL && current->next->is_free && current->next->size + current->size >= size){
+            //if size can fit in the current space: just expand it
+            memblock_* empty_block = current->next;
+            empty_block->size += current->size - size;
+            current->size = size;
+            empty_block->address = (char*)current->address + current->size;
 
-    if(old_size < size) {
-        if(current->next != NULL && current->next->is_free && current->next->size + current->size + sizeof(struct memblock) >= size){
-            
-            current->size += current->next->size + sizeof(struct memblock);
-            current->next = current->next->next;
-
-            if(current->size > size + sizeof(struct memblock))
-            {
-                struct memblock *new_memblock = (struct memblock*)((char*)current +sizeof(struct memblock) + size);
-                new_memblock->size = current->size - size - sizeof(struct memblock);
-                new_memblock->is_free = true;
-                new_memblock->next = current->next;
-
-                current->next=new_memblock;
-                current->size = size;
-            }
-            totmemused_ += (current->size - old_size);
             return block;
         }
+        else {
+            //if size cant fit in current space: we have to move the memory
+            void *new_block = mem_alloc(size);
+            if(new_block != NULL) {
+                memcpy(new_block, block, current->size < size ? current->size : size);
+                mem_free(block);
+                current->is_free = true;
 
-    }
-    if(old_size > size){
-        if(old_size > size + sizeof(struct memblock)) {
-            struct memblock *new_memblock = (struct memblock*)((char*)current + sizeof(struct memblock)+size);
-            new_memblock->size = old_size - size - sizeof(struct memblock);
-            new_memblock->is_free = true;
-            new_memblock->next = current->next;
-
-            current->next = new_memblock;
+                return new_block;
+            }
+            return NULL;
         }
-        current->size = size;
-        totmemused_ -= (old_size -size);
-        return block;
     }
+    //third case: resize to smaller size
+    if(current->size > size){
+       //make a new memory block for the free memory, and insert it into the metadata
+        memblock_ *new_memblock = setblock(
+            current->size - size, 
+            true, 
+            (char*)current->address + size, 
+            current->next);
 
-    void *new_memblock = mem_alloc(size);
-    if(new_memblock != NULL) {
-        memcpy(new_memblock, block, old_size < size ? old_size : size);
-        mem_free(block);
-        return new_memblock;
+        current->size = size;
+        current->next = new_memblock;
+        return block;
     }
     fprintf(stderr, "Error: Not enough memory to resize this block.\n");
     return NULL;
@@ -170,9 +190,7 @@ void mem_deinit() {
     if(memory_ != NULL){
         free(memory_);
         memory_ = NULL;
+        free_metadata(metadata_);
         metadata_ = NULL;
-        memsize_ = 0;
-        totmemused_ = 0;
     }
-
 }
